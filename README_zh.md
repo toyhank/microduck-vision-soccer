@@ -1,6 +1,6 @@
 # 🦆 Microduck Vision Soccer（小黄鸭自主视觉足球）⚽
 
-面向 Pollen Microduck 的视觉自主足球：通过头部相机找球、接近并瞄准，再用双足策略完成真实物理踢球。
+面向 Pollen Microduck 的视觉自主足球：通过头部相机找球、接近并瞄准，再用双足策略完成真实物理踢球。最新仿真版本支持一只视觉进攻鸭对阵一只单目视觉守门鸭。
 
 <p align="center">
   <a href="README.md"><b>English</b></a> · <a href="README_zh.md"><b>中文</b></a>
@@ -8,6 +8,7 @@
 
 <p align="center">
   <img src="docs/assets/vision-soccer-demo.gif" width="400" alt="Microduck 使用头部相机识别、接近、踢球并进门">
+  <br><sub>严格视觉进攻：识别 → 接近 → 瞄准 → 物理踢球 → 进门</sub>
 </p>
 
 <p align="center">
@@ -21,7 +22,7 @@ python sim_duck_soccer.py --mode strict
 python benchmark.py --trials 10 --seed 0
 ```
 
-严格模式只用头部 RGB 相机、IMU 和关节编码器做控制；仿真世界坐标只供独立评估。踢球由随仓库提供的 ONNX 策略和 MuJoCo 真实接触完成，不瞬移足球，也不注入速度。仓库包含真机运行脚本，但尚未完成真机验证。
+严格模式只用头部 RGB 相机、IMU 和关节编码器做控制；仿真世界坐标只供独立评估。踢球由随仓库提供的 ONNX 策略和 MuJoCo 真实接触完成，不瞬移足球，也不注入速度。由于 Microduck 实机尚未发货，目前无法进行真机验证；仓库中的机载运行脚本留待收到实机后测试。
 
 <p align="center">
   <img src="https://img.shields.io/badge/Robot-Microduck-ffcc00?style=flat-square" alt="Microduck">
@@ -32,6 +33,17 @@ python benchmark.py --trials 10 --seed 0
 </p>
 
 > **当前状态：仿真实验原型。** 严格视觉模式的测试范围见 [VALIDATION.md](VALIDATION.md)，单独验证的 98/100 仿真真值基线见 [ORACLE_VALIDATION.md](ORACLE_VALIDATION.md)。
+
+### 最新功能：视觉进攻鸭 vs 视觉守门鸭
+
+<p align="center">
+  <img src="docs/assets/vision-soccer-1v1.gif" width="640" alt="MuJoCo 中视觉进攻鸭射门，单目视觉守门鸭扑救">
+  <br><sub>双机载相机 HUD：进攻鸭在 8.44 秒射门，守门鸭视觉识别、拦截并将物理足球解围。</sub>
+</p>
+
+```bash
+python sim_duck_soccer.py --mode strict --goalkeeper
+```
 
 
 ---

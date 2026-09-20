@@ -1,6 +1,6 @@
 # 🦆 Microduck Vision Soccer ⚽
 
-Vision-driven autonomous soccer for Pollen Microduck: find the ball with the head camera, approach and aim, then score with a physical bipedal kick in MuJoCo.
+Vision-driven autonomous soccer for Pollen Microduck: find the ball with the head camera, approach and aim, then score with a physical bipedal kick in MuJoCo. The latest simulation supports a visual striker versus a monocular visual goalkeeper.
 
 <p align="center">
   <a href="README.md"><b>English</b></a> · <a href="README_zh.md"><b>中文</b></a>
@@ -8,6 +8,7 @@ Vision-driven autonomous soccer for Pollen Microduck: find the ball with the hea
 
 <p align="center">
   <img src="docs/assets/vision-soccer-demo.gif" width="400" alt="Microduck detects, approaches, kicks, and scores using its head camera">
+  <br><sub>Strict visual striker: detect → approach → aim → physical kick → goal</sub>
 </p>
 
 <p align="center">
@@ -21,7 +22,7 @@ python sim_duck_soccer.py --mode strict
 python benchmark.py --trials 10 --seed 0
 ```
 
-The strict controller uses RGB head-camera frames plus IMU and joint encoders; simulator world positions are reserved for evaluation. Kicks come from the bundled ONNX policy and actual MuJoCo contact—no ball teleportation or injected velocity. A real-robot runner is included but remains hardware-unverified.
+The strict controller uses RGB head-camera frames plus IMU and joint encoders; simulator world positions are reserved for evaluation. Kicks come from the bundled ONNX policy and actual MuJoCo contact—no ball teleportation or injected velocity. The real Microduck hardware has not shipped yet, so real-robot behavior has not been verified; the onboard runner is included for future hardware testing.
 
 <p align="center">
   <img src="https://img.shields.io/badge/Robot-Microduck-ffcc00?style=flat-square" alt="Microduck">
@@ -32,6 +33,17 @@ The strict controller uses RGB head-camera frames plus IMU and joint encoders; s
 </p>
 
 > **Status: simulation prototype.** See [VALIDATION.md](VALIDATION.md) for the strict visual controller's scope and [ORACLE_VALIDATION.md](ORACLE_VALIDATION.md) for the separately validated 98/100 ground-truth baseline.
+
+### Latest: visual 1v1 striker vs goalkeeper
+
+<p align="center">
+  <img src="docs/assets/vision-soccer-1v1.gif" width="640" alt="Visual Microduck striker shoots against a monocular visual goalkeeper in MuJoCo">
+  <br><sub>Dual onboard-camera HUD: the striker kicks at 8.44 s; the goalkeeper sees, intercepts, and clears the physical ball.</sub>
+</p>
+
+```bash
+python sim_duck_soccer.py --mode strict --goalkeeper
+```
 
 
 ---
