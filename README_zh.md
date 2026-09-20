@@ -37,12 +37,17 @@ python benchmark.py --trials 10 --seed 0
 ### 最新功能：视觉进攻鸭 vs 视觉守门鸭
 
 <p align="center">
+  <img src="docs/assets/mujoco-1v1-field.gif" width="640" alt="MuJoCo 外部场地视角下，Microduck 进攻鸭射门、视觉守门鸭扑救">
+  <br><sub>MuJoCo 外部场地视角：物理接近、踢球、守门鸭触球并解围；不瞬移足球，也不注入速度。</sub>
+  <br><br>
   <img src="docs/assets/vision-soccer-1v1.gif" width="640" alt="MuJoCo 中视觉进攻鸭射门，单目视觉守门鸭扑救">
   <br><sub>双机载相机 HUD：进攻鸭在 8.44 秒射门，守门鸭视觉识别、拦截并将物理足球解围。</sub>
 </p>
 
 ```bash
 python sim_duck_soccer.py --mode strict --goalkeeper
+python sim_duck_soccer.py --mode strict --goalkeeper --headless \
+  --record-view field --record match.mp4 --duration 13
 ```
 
 
@@ -136,8 +141,11 @@ python sim_duck_soccer.py --mode strict
 # 1对1对战模式：自主纯视觉守门鸭 (身穿翡翠绿球衣，机载 10Hz 单目视觉 + 弹道预测拦截，开启双屏 HUD)
 python sim_duck_soccer.py --mode strict --goalkeeper
 
-# 录制 1v1 高清双视角对战视频至 MP4 (1280x480)
+# 录制 1v1 高清双机载视觉 HUD 至 MP4（1280x480，默认录制视角）
 python sim_duck_soccer.py --mode strict --goalkeeper --record match.mp4 --duration 12
+
+# 录制 MuJoCo 外部场地视角（640x360）
+python sim_duck_soccer.py --mode strict --goalkeeper --headless --record-view field --record field.mp4 --duration 13
 
 # 守门员真值对照模式 (Oracle 基线)
 python sim_duck_soccer.py --mode strict --goalkeeper --gk-mode oracle

@@ -37,12 +37,17 @@ The strict controller uses RGB head-camera frames plus IMU and joint encoders; s
 ### Latest: visual 1v1 striker vs goalkeeper
 
 <p align="center">
+  <img src="docs/assets/mujoco-1v1-field.gif" width="640" alt="External MuJoCo field view of a Microduck striker shooting against a visual goalkeeper">
+  <br><sub>External MuJoCo field view: physical approach, kick, goalkeeper contact, and clearance—no ball teleportation or injected velocity.</sub>
+  <br><br>
   <img src="docs/assets/vision-soccer-1v1.gif" width="640" alt="Visual Microduck striker shoots against a monocular visual goalkeeper in MuJoCo">
   <br><sub>Dual onboard-camera HUD: the striker kicks at 8.44 s; the goalkeeper sees, intercepts, and clears the physical ball.</sub>
 </p>
 
 ```bash
 python sim_duck_soccer.py --mode strict --goalkeeper
+python sim_duck_soccer.py --mode strict --goalkeeper --headless \
+  --record-view field --record match.mp4 --duration 13
 ```
 
 
@@ -135,8 +140,11 @@ python sim_duck_soccer.py --mode strict
 # 1-on-1 Match Mode: Pure Monocular Vision Goalkeeper (Emerald Green, 10Hz camera + trajectory intercept, dual HUD)
 python sim_duck_soccer.py --mode strict --goalkeeper
 
-# Record 1v1 HD dual-vision match video to MP4 (1280x480)
+# Record 1v1 HD dual-onboard-vision HUD to MP4 (1280x480, default record view)
 python sim_duck_soccer.py --mode strict --goalkeeper --record match.mp4 --duration 12
+
+# Record an external MuJoCo field view (640x360)
+python sim_duck_soccer.py --mode strict --goalkeeper --headless --record-view field --record field.mp4 --duration 13
 
 # Goalkeeper ground-truth baseline comparison (Oracle Mode)
 python sim_duck_soccer.py --mode strict --goalkeeper --gk-mode oracle

@@ -51,6 +51,8 @@ def parse_args():
     parser.add_argument("--gk-vision", dest="gk_mode", action="store_const", const="visual",
                         help="Force goalkeeper to use pure monocular vision (default)")
     parser.add_argument("--record", type=str, help="Save HUD visualization video to MP4 file (e.g. match.mp4)")
+    parser.add_argument("--record-view", choices=["hud", "field"], default="hud",
+                        help="Recorded camera: onboard vision HUD or external MuJoCo field view")
     args = parser.parse_args()
     if args.terminal_duration <= 0 or (args.duration is not None and args.duration <= 0):
         parser.error("durations must be positive")
@@ -76,6 +78,16 @@ def main():
     # 1. Perception modules
     cam_width, cam_height = 320, 240
     renderer = mujoco.Renderer(m, cam_height, cam_width)
+    field_renderer = None
+    field_camera = None
+    if args.record and args.record_view == "field":
+        field_renderer = mujoco.Renderer(m, 360, 640)
+        field_camera = mujoco.MjvCamera()
+        field_camera.type = mujoco.mjtCamera.mjCAMERA_FREE
+        field_camera.lookat[:] = [1.45, 0.0, 0.08]
+        field_camera.distance = 2.9
+        field_camera.azimuth = 120.0
+        field_camera.elevation = -20.0
     ball_detector = BallDetector(cam_width, cam_height, fovy_deg=90.0)
     goal_detector = GoalDetector(cam_width, cam_height, fovy_deg=90.0)
 
@@ -156,9 +168,11 @@ def main():
 
     video_writer = None
     if args.record:
+        record_size = (640, 360) if args.record_view == "field" else (canvas_w, canvas_h)
         fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        video_writer = cv2.VideoWriter(args.record, fourcc, 10.0, (canvas_w, canvas_h))
-        print(f"[Recording] Saving match video to: {args.record} ({canvas_w}x{canvas_h})")
+        video_writer = cv2.VideoWriter(args.record, fourcc, 10.0, record_size)
+        print(f"[Recording] Saving {args.record_view} video to: {args.record} "
+              f"({record_size[0]}x{record_size[1]})")
 
     print(f"\n[Running] Policy: 50Hz, Vision: 10Hz, Kick window: {KICK_DURATION_SEC:.1f}s")
 
@@ -274,7 +288,26 @@ def main():
                     display_frame = cv2.resize(combined_canvas, (canvas_w, canvas_h))
 
                     if video_writer is not None:
-                        video_writer.write(display_frame)
+                        record_frame = display_frame
+                        if field_renderer is not None:
+                            field_renderer.update_scene(d, camera=field_camera)
+                            field_rgb = field_renderer.render()
+                            record_frame = cv2.cvtColor(field_rgb, cv2.COLOR_RGB2BGR)
+                            title = ("MUJOCO 1v1: STRIKER vs GOALKEEPER"
+                                     if args.goalkeeper else "MUJOCO: VISUAL STRIKER")
+                            status = f"{elapsed_time:04.1f}s | STRIKER: {state_machine.state}"
+                            if args.goalkeeper:
+                                status += f" | GK: {gk_controller.state.value}"
+                            cv2.rectangle(record_frame, (0, 0), (640, 58), (28, 38, 48), -1)
+                            for text, y, scale in ((title, 24, 0.55), (status, 47, 0.42)):
+                                cv2.putText(record_frame, text, (13, y), cv2.FONT_HERSHEY_SIMPLEX,
+                                            scale, (255, 255, 255), 1, cv2.LINE_AA)
+                            if metrics.shot_saved:
+                                cv2.putText(record_frame, "SAVE!", (270, 330),
+                                            cv2.FONT_HERSHEY_DUPLEX, 1.0, (0, 0, 0), 4, cv2.LINE_AA)
+                                cv2.putText(record_frame, "SAVE!", (270, 330),
+                                            cv2.FONT_HERSHEY_DUPLEX, 1.0, (0, 255, 255), 2, cv2.LINE_AA)
+                        video_writer.write(record_frame)
 
                     if not args.headless:
                         cv2.imshow("Microduck Egocentric Vision", display_frame)
@@ -388,6 +421,8 @@ def main():
         print("\nSimulation interrupted by user.")
     finally:
         renderer.close()
+        if field_renderer is not None:
+            field_renderer.close()
         if video_writer is not None:
             video_writer.release()
             print(f"[Recording] Match video cleanly saved to {args.record}")
