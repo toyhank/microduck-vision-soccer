@@ -1,24 +1,37 @@
-# 🦆 Microduck Vision Soccer (小黄鸭自主视觉踢足球系统) ⚽
+# 🦆 Microduck Vision Soccer（小黄鸭自主视觉足球）⚽
+
+面向 Pollen Microduck 的视觉自主足球：通过头部相机找球、接近并瞄准，再用双足策略完成真实物理踢球。
 
 <p align="center">
-  <a href="README.md"><b>English</b></a> | <a href="README_zh.md"><b>中文文档</b></a>
+  <a href="README.md"><b>English</b></a> · <a href="README_zh.md"><b>中文</b></a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Robot-Microduck-ffcc00?style=for-the-badge&logo=android" alt="Microduck">
-  <img src="https://img.shields.io/badge/Physics-MuJoCo_3.x-blue?style=for-the-badge" alt="MuJoCo">
-  <img src="https://img.shields.io/badge/Vision-OpenCV_4.x-green?style=for-the-badge&logo=opencv" alt="OpenCV">
-  <img src="https://img.shields.io/badge/RL-ONNX_Runtime-purple?style=for-the-badge&logo=onnx" alt="ONNX">
-  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python" alt="Python">
-  <img src="https://img.shields.io/badge/License-Apache_2.0-red?style=for-the-badge" alt="License">
+  <img src="docs/assets/vision-soccer-demo.gif" width="400" alt="Microduck 使用头部相机识别、接近、踢球并进门">
 </p>
 
 <p align="center">
-  <em>专为 <b>Pollen Robotics Microduck</b> 设计的<b>仿真优先视觉伺服控制系统</b>，为官方“盲踢”（Ball-blind）的强化学习踢球策略提供视觉接近与定时终末控制。</em><br>
-  <em>具备严格纯视觉导航（无作弊上帝视角）、单目尺度测距、真实物理碰撞射门（无瞬移球作弊），以及自动化定量基准评测套件。</em>
+  <b>100 次中进球 98 次 · 踢腿触球且进球 96 次 · 跌倒 0 次</b><br>
+  <sub>冻结参数后的 MuJoCo 仿真真值导航基线，种子 100–199。上方 GIF 使用相机视觉控制，两类结果分别报告。</sub>
 </p>
 
-> **当前状态：仿真实验原型。** 已接入距离减速、真实踢腿接触统计和共享真机状态机。严格视觉模式近距离仍采用经过校准的定时盲走；球门朝向目前只作观测，不参与瞄准。另新增下方的仿真真值导航基线。真机尚未验证。测试方法与限制见 [VALIDATION.md](VALIDATION.md)。
+```bash
+pip install -r requirements.txt
+python sim_duck_soccer.py --mode strict
+python benchmark.py --trials 10 --seed 0
+```
+
+严格模式只用头部 RGB 相机、IMU 和关节编码器做控制；仿真世界坐标只供独立评估。踢球由随仓库提供的 ONNX 策略和 MuJoCo 真实接触完成，不瞬移足球，也不注入速度。仓库包含真机运行脚本，但尚未完成真机验证。
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Robot-Microduck-ffcc00?style=flat-square" alt="Microduck">
+  <img src="https://img.shields.io/badge/Physics-MuJoCo_3.x-blue?style=flat-square" alt="MuJoCo">
+  <img src="https://img.shields.io/badge/Vision-OpenCV_4.x-green?style=flat-square" alt="OpenCV">
+  <img src="https://img.shields.io/badge/Policy-ONNX_Runtime-purple?style=flat-square" alt="ONNX Runtime">
+  <img src="https://img.shields.io/badge/License-Apache_2.0-red?style=flat-square" alt="License">
+</p>
+
+> **当前状态：仿真实验原型。** 严格视觉模式的测试范围见 [VALIDATION.md](VALIDATION.md)，单独验证的 98/100 仿真真值基线见 [ORACLE_VALIDATION.md](ORACLE_VALIDATION.md)。
 
 
 ---
@@ -51,20 +64,23 @@ flowchart TD
         GoalDet --> GoalBearing["球门朝向方位角"]
     end
 
-    subgraph BRAIN ["2. 决策与有限状态机 (严格模式)"]
-        Depth --> FSM{"SoccerStateMachine"}
-        FSM -->|未见足球| S1["SEARCH_BALL: 原地慢速扫描"]
-        FSM -->|锁定足球| S2["APPROACH_BALL: 全向视觉伺服与漂移补偿逼近"]
-        FSM -->|cy >= 230 且方向误差合格| S3["TERMINAL_APPROACH: 定时盲进与侧移"]
-        FSM -->|盲进步完成| S4["ALIGN_KICK: 站立姿态消除惯性"]
-        FSM -->|站立稳固| S5["KICK: 触发 ball_kick_right 爆发踢球 (0.5s 窗口)"]
+    subgraph BRAIN ["2. 定位、瞄准与视觉伺服"]
+        Depth --> Loc["VisualLocalization: 相机几何 + 编码器/IMU 里程计"]
+        GoalBearing --> Loc
+        Loc --> FSM{"CalibratedVisualSoccerController"}
+        FSM -->|球或球门估计不可用| S1["SEARCH_BALL: 扫描或后退恢复视野"]
+        FSM -->|视觉位置可用| S2["APPROACH_BALL: 沿球门连线移动到球后方"]
+        FSM -->|到达击球位姿| S4["ALIGN_KICK: 站稳并复核击球区、瞄准和稳定性"]
+        S4 -. "可选：--look-before-kick" .-> S3["LOOK_DOWN: 低头确认近球，再抬头重新瞄准"]
+        S4 -->|检查通过| S5["KICK: 触发 ball_kick_right 爆发踢球 (0.5s 窗口)"]
+        S3 --> S4
         FSM -->|踢球动作结束| S6["GOAL_CHECK: 观察足球轨迹与补射判定"]
         S6 -->|进球判定成功| S7["CELEBRATE: 点头欢庆动作"]
     end
 
     subgraph ACT ["3. 策略执行层 (50Hz 低通滤波)"]
-        S1 & S2 & S3 --> WalkPol["行走策略 alpha_walking.onnx (Scale 0.9, Lowpass 0.7/0.5)"]
-        S4 & S6 & S7 --> StandPol["站立策略 alpha_stand.onnx (Scale 1.0)"]
+        S1 & S2 --> WalkPol["行走策略 alpha_walking.onnx (Scale 0.9, Lowpass 0.7/0.5)"]
+        S3 & S4 & S6 & S7 --> StandPol["站立策略 alpha_stand.onnx (Scale 1.0)"]
         S5 --> KickPol["踢球策略 ball_kick_right.onnx (Scale 1.0, 0.5s 窗口)"]
     end
 
@@ -77,15 +93,15 @@ flowchart TD
 
 ## 🎯 状态机详细规范 (FSM Details)
 
-由于机载前向相机在近距离时存在“鸭嘴盲区”（距机体 $Z \le 0.35\text{ m}$ 的足球会滑出视野下方），本方案采用视觉接近加定时开环终末动作；盲区边界和位移依赖相机姿态与实际步态：
+默认严格控制器先把球与球门像素转换为局部公制位置，再通过关节编码器/IMU 的短程里程计，在足球进入相机近场盲区后延续位置估计。控制器把右脚送到标定后的击球位姿，并根据实测“球→球门”连线主动瞄准。还可以选择在踢球前低头，用视觉再次确认静止近球：
 
 | 状态 (State) | 感知输入条件 | 运动控制逻辑 | 转移条件 |
 | :--- | :--- | :--- | :--- |
-| **`SEARCH_BALL`** | `ball.visible == False` | 原地旋转扫描搜寻 (`vyaw = 0.40 rad/s`) | `ball.visible == True` |
-| **`APPROACH_BALL`** | 足球偏角 $\theta$ 与测距距离 $Z$ | 全向视觉伺服对齐右脚方向，前向匀速逼近并进行侧向漂移补偿 ($v_x = 0.30\ldots0.35$，偏差大时先转向) | 足球触及相机视野底部 ($c_y \ge 230$) |
-| **`TERMINAL_APPROACH`** | 足球进入鸭嘴视线盲区 | 执行定时盲步（$v_x=0.35$, $v_y=0.06$, $t=1.52$）；指令速度不等于实际位移，需校准 | 盲步计时器到期 ($t \ge 1.52\text{ s}$) |
-| **`ALIGN_KICK`** | 终末计时结束（未确认球的位置） | 切入 `alpha_stand` 稳固站立消除身体前倾惯性 | 站立平稳计时器到期 ($t \ge 0.30\text{ s}$) |
-| **`KICK`** | 站立计时结束 | 切换为 `ball_kick_right.onnx` 执行爆发式单腿踢球（精准 0.5 秒） | 踢球动作窗口结束 |
+| **`SEARCH_BALL`** | 球或球门估计缺失/过期 | 原地扫描；若记忆中的球太近而不可见，则后退恢复视野 | 获得新鲜的球和球门估计 |
+| **`APPROACH_BALL`** | 相机估计的球/球门位置与编码器/IMU 里程计 | 先绕到球后方，再走向标定的右脚击球位姿，并把预测出球方向对准球门 | 到达目标位姿，或预测脚部间隙正在快速收敛 |
+| **`ALIGN_KICK`** | 到达击球位姿 | 切入 `alpha_stand`，复核球是否在击球区、射门角余量、机体稳定性及球速 | 所有踢球条件通过 |
+| **`LOOK_DOWN`** *（可选）* | 启用 `--look-before-kick` 且踢球条件通过 | 低头采集一致的近球图像样本，抬头后重新进行定位与瞄准检查 | 确认足球；若超时则不踢 |
+| **`KICK`** | 击球区、瞄准、稳定性与球速检查全部通过 | 切换为 `ball_kick_right.onnx` 执行爆发式单腿踢球（精准 0.5 秒） | 踢球动作窗口结束 |
 | **`GOAL_CHECK`** | 踢球动作完成 | 切回站立姿态，观察足球滚动轨迹 | strict 模式等待后重新搜球；进球真值只用于统计 |
 | **`CELEBRATE`** | 仅 demo 模式允许评估器触发 | 屏幕弹出金色横幅，头部有节奏地点头欢庆 | 庆祝计时器归零，重置状态 |
 

@@ -1,24 +1,37 @@
-# 🦆 Microduck Vision Soccer: Closed-Loop Visual Servoing & Bipedal Kick System ⚽
+# 🦆 Microduck Vision Soccer ⚽
+
+Vision-driven autonomous soccer for Pollen Microduck: find the ball with the head camera, approach and aim, then score with a physical bipedal kick in MuJoCo.
 
 <p align="center">
-  <a href="README.md"><b>English</b></a> | <a href="README_zh.md"><b>中文文档</b></a>
+  <a href="README.md"><b>English</b></a> · <a href="README_zh.md"><b>中文</b></a>
 </p>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Robot-Microduck-ffcc00?style=for-the-badge&logo=android" alt="Microduck">
-  <img src="https://img.shields.io/badge/Physics-MuJoCo_3.x-blue?style=for-the-badge" alt="MuJoCo">
-  <img src="https://img.shields.io/badge/Vision-OpenCV_4.x-green?style=for-the-badge&logo=opencv" alt="OpenCV">
-  <img src="https://img.shields.io/badge/RL-ONNX_Runtime-purple?style=for-the-badge&logo=onnx" alt="ONNX">
-  <img src="https://img.shields.io/badge/Python-3.10+-3776AB?style=for-the-badge&logo=python" alt="Python">
-  <img src="https://img.shields.io/badge/License-Apache_2.0-red?style=for-the-badge" alt="License">
+  <img src="docs/assets/vision-soccer-demo.gif" width="400" alt="Microduck detects, approaches, kicks, and scores using its head camera">
 </p>
 
 <p align="center">
-  <em>A simulator-first visual servoing layer for <b>Pollen Robotics Microduck</b> that closes the perception-action loop around the official ball-blind <code>BallKick</code> policy.</em><br>
-  <em>Features strict vision-only navigation (no ground-truth state cheats), monocular metric depth estimation, physical bipedal kicking (no ball teleportation), and an automated benchmark suite.</em>
+  <b>98/100 goals · 96/100 goals with kick contact · 0 falls</b><br>
+  <sub>Frozen MuJoCo ground-truth navigation baseline, seeds 100–199. The GIF above runs the camera-driven controller. Results are intentionally reported separately.</sub>
 </p>
 
-> **Status: simulation prototype.** Distance-based slowdown, physical kick-contact metrics and a shared onboard state machine are implemented. In strict vision mode, the final blind advance is still time-calibrated; goal bearing is observed but is not used to aim. A separate ground-truth navigation baseline is now available below. Hardware operation is unverified. See [VALIDATION.md](VALIDATION.md) for tests and limitations.
+```bash
+pip install -r requirements.txt
+python sim_duck_soccer.py --mode strict
+python benchmark.py --trials 10 --seed 0
+```
+
+The strict controller uses RGB head-camera frames plus IMU and joint encoders; simulator world positions are reserved for evaluation. Kicks come from the bundled ONNX policy and actual MuJoCo contact—no ball teleportation or injected velocity. A real-robot runner is included but remains hardware-unverified.
+
+<p align="center">
+  <img src="https://img.shields.io/badge/Robot-Microduck-ffcc00?style=flat-square" alt="Microduck">
+  <img src="https://img.shields.io/badge/Physics-MuJoCo_3.x-blue?style=flat-square" alt="MuJoCo">
+  <img src="https://img.shields.io/badge/Vision-OpenCV_4.x-green?style=flat-square" alt="OpenCV">
+  <img src="https://img.shields.io/badge/Policy-ONNX_Runtime-purple?style=flat-square" alt="ONNX Runtime">
+  <img src="https://img.shields.io/badge/License-Apache_2.0-red?style=flat-square" alt="License">
+</p>
+
+> **Status: simulation prototype.** See [VALIDATION.md](VALIDATION.md) for the strict visual controller's scope and [ORACLE_VALIDATION.md](ORACLE_VALIDATION.md) for the separately validated 98/100 ground-truth baseline.
 
 
 ---
@@ -50,20 +63,23 @@ flowchart TD
         GoalDet --> GoalBearing["Goal Bearing & Heading Angle"]
     end
 
-    subgraph BRAIN ["2. Decision & Visual Servoing"]
-        Depth --> FSM{"SoccerStateMachine (Strict Mode)"}
-        FSM -->|Ball not visible| S1["SEARCH_BALL: In-place scan rotation"]
-        FSM -->|Ball detected| S2["APPROACH_BALL: Omnidirectional visual servoing with drift compensation"]
-        FSM -->|cy >= 230 and bearing aligned| S3["TERMINAL_APPROACH: Timed forward and lateral advance"]
-        FSM -->|Advance complete| S4["ALIGN_KICK: Settle stance in firm standing pose"]
-        FSM -->|Stance settled| S5["KICK: Trigger ball_kick_right (0.5s window)"]
+    subgraph BRAIN ["2. Localization, Aiming & Visual Servoing"]
+        Depth --> Loc["VisualLocalization: camera geometry + encoder/IMU odometry"]
+        GoalBearing --> Loc
+        Loc --> FSM{"CalibratedVisualSoccerController"}
+        FSM -->|Ball or goal unavailable| S1["SEARCH_BALL: Scan or back away to recover view"]
+        FSM -->|Visual positions available| S2["APPROACH_BALL: Move behind the ball on the ball-to-goal line"]
+        FSM -->|Strike pose reached| S4["ALIGN_KICK: Stand, verify strike zone, aim, and stability"]
+        S4 -. "optional: --look-before-kick" .-> S3["LOOK_DOWN: Inspect near ball, then raise head and re-aim"]
+        S4 -->|Checks pass| S5["KICK: Trigger ball_kick_right (0.5s window)"]
+        S3 --> S4
         FSM -->|Kick complete| S6["GOAL_CHECK: Observe trajectory & follow-up"]
         S6 -->|Goal confirmed| S7["CELEBRATE: Victory head nod"]
     end
 
     subgraph ACT ["3. Policy Execution Layer (50Hz Low-Pass Filtered)"]
-        S1 & S2 & S3 --> WalkPol["alpha_walking.onnx (Scale 0.9, Lowpass 0.7/0.5)"]
-        S4 & S6 & S7 --> StandPol["alpha_stand.onnx (Scale 1.0)"]
+        S1 & S2 --> WalkPol["alpha_walking.onnx (Scale 0.9, Lowpass 0.7/0.5)"]
+        S3 & S4 & S6 & S7 --> StandPol["alpha_stand.onnx (Scale 1.0)"]
         S5 --> KickPol["ball_kick_right.onnx (Scale 1.0, 0.5s duration)"]
     end
 
@@ -76,15 +92,15 @@ flowchart TD
 
 ## 🎯 State Machine Specification
 
-Because the forward-facing egocentric camera cannot see objects directly beneath the beak ($Z \le 0.35\text{ m}$), the controller solves the terminal camera blind spot through a visual approach followed by a calibrated timed advance; the blind-zone boundary depends on head pose:
+The default strict controller converts ball and goal pixels into local metric estimates, then carries those estimates through the near-field camera blind spot with short-range joint-encoder/IMU odometry. It positions the right foot on a calibrated strike pose and actively aims the measured ball-to-goal line. An optional look-down pass can visually reconfirm a stationary near ball before the kick:
 
 | State | Perception Trigger | Control Action | Transition Condition |
 | :--- | :--- | :--- | :--- |
-| **`SEARCH_BALL`** | `ball.visible == False` | In-place yaw spin ($v_{\text{yaw}} = 0.40\text{ rad/s}$) | `ball.visible == True` |
-| **`APPROACH_BALL`** | Ball bearing $\theta$ and depth $Z$ | Visual servoing steering ($v_{\text{yaw}} = -2.0 \theta$), distance-dependent advance ($v_x = 0.30\ldots0.35$; stop advancing for large bearing error), and lateral drift compensation ($v_y$) | Ball touches bottom of frame ($c_y \ge 230$) |
-| **`TERMINAL_APPROACH`** | Ball enters beak blind spot | Timed advance ($v_x=0.35$, $v_y=0.06$, $t=1.52$); commanded speed is not measured displacement | Timer expires ($t \ge 1.52\text{ s}$) |
-| **`ALIGN_KICK`** | Terminal timer complete; ball position unconfirmed | Stand firmly in `alpha_stand` to eliminate forward inertia | Stance settled ($t \ge 0.30\text{ s}$) |
-| **`KICK`** | Settling timer complete | Swap ONNX policy to `ball_kick_right.onnx` for dynamic single-leg strike | Kick duration expires ($0.5\text{ s}$) |
+| **`SEARCH_BALL`** | Ball or goal estimate is unavailable/stale | Scan in place; back away when a remembered ball is too close to see | Fresh ball and goal estimates available |
+| **`APPROACH_BALL`** | Camera-derived ball/goal positions plus encoder/IMU odometry | Stage behind the ball, move to the calibrated right-foot strike pose, and align the predicted kick direction with the goal | Target pose reached or predicted foot clearance is closing |
+| **`ALIGN_KICK`** | Strike pose reached | Stand in `alpha_stand`; verify ball zone, shot margin, body stability, and ball speed | All kick checks pass |
+| **`LOOK_DOWN`** *(optional)* | `--look-before-kick` and kick checks pass | Lower the head, collect consistent near-ball image samples, raise the head, then re-run positioning and aim checks | Ball reconfirmed, or inspection times out without kicking |
+| **`KICK`** | Strike-zone, aim, stability, and ball-speed checks pass | Swap ONNX policy to `ball_kick_right.onnx` for dynamic single-leg strike | Kick duration expires ($0.5\text{ s}$) |
 | **`GOAL_CHECK`** | Kick finished | Stand upright and observe ball trajectory | Strict mode returns to `SEARCH_BALL` after waiting; goal truth is evaluation-only |
 | **`CELEBRATE`** | Demo-only evaluator goal signal | Pitch head up and down rhythmically, victory celebration | Timer expires |
 
