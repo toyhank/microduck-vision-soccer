@@ -1,6 +1,6 @@
-# 🦆 Microduck Vision Soccer ⚽
+# 🦆 Microduck Vision Soccer — Autonomous Robot Soccer in MuJoCo ⚽
 
-Vision-driven autonomous soccer for Pollen Microduck: find the ball with the head camera, approach and aim, then score with a physical bipedal kick in MuJoCo. The latest simulation supports a visual striker versus a monocular visual goalkeeper.
+Autonomous robot soccer for Pollen Robotics Microduck in MuJoCo: find the ball with the head camera, approach and aim, then score with a physical bipedal kick. The latest simulation supports a visual striker versus a monocular visual goalkeeper.
 
 <p align="center">
   <a href="README.md"><b>English</b></a> · <a href="README_zh.md"><b>中文</b></a>

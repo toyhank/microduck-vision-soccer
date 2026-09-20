@@ -1,6 +1,6 @@
-# 🦆 Microduck Vision Soccer（小黄鸭自主视觉足球）⚽
+# 🦆 Microduck Vision Soccer — MuJoCo 自主机器人足球 ⚽
 
-面向 Pollen Microduck 的视觉自主足球：通过头部相机找球、接近并瞄准，再用双足策略完成真实物理踢球。最新仿真版本支持一只视觉进攻鸭对阵一只单目视觉守门鸭。
+面向 Pollen Robotics Microduck 的 MuJoCo 自主机器人足球：通过头部相机找球、接近并瞄准，再用双足策略完成真实物理踢球。最新仿真版本支持一只视觉进攻鸭对阵一只单目视觉守门鸭。
 
 <p align="center">
   <a href="README.md"><b>English</b></a> · <a href="README_zh.md"><b>中文</b></a>
