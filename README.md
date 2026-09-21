@@ -1,6 +1,6 @@
 # 🦆 Microduck Vision Soccer — Autonomous Robot Soccer in MuJoCo ⚽
 
-Autonomous robot soccer for Pollen Robotics Microduck in MuJoCo: find the ball with the head camera, approach and aim, then score with a physical bipedal kick. The latest simulation supports a visual striker versus a monocular visual goalkeeper.
+Autonomous robot soccer for Pollen Robotics Microduck: develop and validate vision-driven soccer in MuJoCo, then run the same perception/state-machine path on the real robot through the official `mediad` camera and `robotd` control interfaces. The latest simulation supports a visual striker versus a monocular visual goalkeeper.
 
 <p align="center">
   <a href="README.md"><b>English</b></a> · <a href="README_zh.md"><b>中文</b></a>
@@ -22,7 +22,7 @@ python sim_duck_soccer.py --mode strict
 python benchmark.py --trials 10 --seed 0
 ```
 
-The strict controller uses RGB head-camera frames plus IMU and joint encoders; simulator world positions are reserved for evaluation. Kicks come from the bundled ONNX policy and actual MuJoCo contact—no ball teleportation or injected velocity. The real Microduck hardware has not shipped yet, so real-robot behavior has not been verified; the onboard runner is included for future hardware testing.
+The strict controller uses RGB head-camera frames plus IMU and joint encoders; simulator world positions are reserved for evaluation. Kicks come from the bundled ONNX policy and actual MuJoCo contact—no ball teleportation or injected velocity. The repository now includes an onboard runner wired to the current Microduck `mediad -> media.frame` camera path and `robotd` JSON-RPC control path. Real-robot soccer behavior is still **hardware-unverified** until tested on a physical Microduck.
 
 <p align="center">
   <img src="https://img.shields.io/badge/Robot-Microduck-ffcc00?style=flat-square" alt="Microduck">
@@ -32,7 +32,7 @@ The strict controller uses RGB head-camera frames plus IMU and joint encoders; s
   <img src="https://img.shields.io/badge/License-Apache_2.0-red?style=flat-square" alt="License">
 </p>
 
-> **Status: simulation prototype.** See [VALIDATION.md](VALIDATION.md) for the strict visual controller's scope and [ORACLE_VALIDATION.md](ORACLE_VALIDATION.md) for the separately validated 98/100 ground-truth baseline.
+> **Status: simulation-validated, hardware-ready prototype.** The onboard camera/control integration follows the current Microduck IPC surfaces, but full soccer behavior has not yet been verified on physical hardware. See [VALIDATION.md](VALIDATION.md) for the strict visual controller's scope and [ORACLE_VALIDATION.md](ORACLE_VALIDATION.md) for the separately validated 98/100 ground-truth baseline.
 
 ### Latest: visual 1v1 striker vs goalkeeper
 
@@ -64,7 +64,7 @@ While projects like `quackd` (2D simulator) and recent community edge implementa
 - **Monocular Metric Depth Estimation**: Solves metric distance from known ball diameter ($D = 70\text{ mm}$) using pinhole geometry:
   $$Z \approx \frac{f \cdot D}{d}$$
 - **Official `robotd` Control Chain Alignment**: Implements official action scaling ($0.9$ walk, $1.0$ kick/stand), first-order joint low-pass filters (legs $\alpha=0.7$, head $\alpha=0.5$), and official 0.5s kick duration windows.
-- **Onboard RPC Protocol Compliance**: Real-robot script (`duck_soccer_onboard.py`) uses the `duck-ipc-proto` request shape (hardware unverified): continuous `robot.move` notifications with `vyaw` (not `vtheta`), discrete `robot.do` requests, and official `chirp` voice tags.
+- **Current Microduck Onboard IPC Integration**: Real-robot script (`duck_soccer_onboard.py`) reads fresh camera frames from `mediad` through `/run/mediad/media.sock` (`media.frame`), converts raw UYVY to BGR, applies the reported camera `rotate` metadata, and sends motion intents to `/run/robotd.sock`. Continuous `robot.move` notifications use `vyaw` (not `vtheta`); discrete kicks use `robot.do`. A legacy V4L2 path remains available for older firmware.
 
 ---
 
@@ -186,24 +186,74 @@ Frozen-controller validation on seeds 100–199: **98/100 goals, 96/100 goals wi
 
 ## 🤖 Real-Robot Onboard Deployment
 
-The script [`duck_soccer_onboard.py`](duck_soccer_onboard.py) runs directly on the Microduck's onboard Rockchip RK3566 Linux SBC:
+The script [`duck_soccer_onboard.py`](duck_soccer_onboard.py) runs directly on the Microduck's onboard Rockchip RK3566 Linux SBC and is aligned with the current official daemon split: `mediad` owns the camera, while `robotd` owns all motor control.
 
-### 1. Protocol Architecture
-- **Camera**: Captures from `/dev/video0` via OpenCV.
-- **Local IPC Socket**: Connects directly to `/run/robotd.sock` over JSON-RPC 2.0.
-  - Continuous velocity control: `notify("robot.move", {"vx": 0.3, "vy": 0.0, "vyaw": ...})`
-  - Discrete skill triggering: `request("robot.do", {"skill": "kick_right"})`
-  - Voice feedback: `notify("robot.sound", {"tag": "chirp"})`
+### 1. Onboard Data Path
 
-### 2. Deployment Steps
+```text
+Head camera
+    ↓
+mediad
+    ↓  /run/mediad/media.sock
+media.frame (JSON header + raw UYVY payload)
+    ↓
+UYVY → BGR → apply rotate metadata → resize
+    ↓
+BallDetector / GoalDetector
+    ↓
+SoccerStateMachine
+    ↓
+/run/robotd.sock
+    ↓
+robot.move / robot.do(kick_right)
+```
+
+- **Preferred camera backend**: `/run/mediad/media.sock`, method `media.frame`.
+- **Frame handling**: validates geometry and byte count, converts packed UYVY to BGR, applies `rotate`, then downsizes without distorting aspect ratio.
+- **Legacy fallback**: `--camera-source v4l2` can still use OpenCV/V4L2 when running older firmware or when `mediad` is intentionally not owning the camera.
+- **Motor safety boundary**: the Python process never writes servos directly; it only sends high-level intents to `robotd`.
+- **No simulator ground truth**: the onboard path consumes image detections plus a monotonic clock; MuJoCo world coordinates are not used.
+
+### 2. Verify the Robot Camera Interface
+
+On current Microduck firmware, check the local frame socket and take one official snapshot before running soccer:
+
 ```bash
-# 1. Copy script to the robot
+robotctl version
+robotctl health
+ls -l /run/mediad/media.sock
+robotctl frame --output /tmp/frame.uyvy
+```
+
+`robotctl frame` prints the capture geometry and camera mount rotation to stderr. If `media.frame` is unavailable, update the robot daemon release or explicitly use the legacy V4L2 backend.
+
+### 3. Deploy and Run
+
+```bash
+# Copy the runner and Python package to the robot
 scp -r duck_soccer_onboard.py microduck_soccer radxa@<DUCK_IP>:~/
 
-# 2. Run on the robot
 ssh radxa@<DUCK_IP>
-python3 duck_soccer_onboard.py
+
+# Current firmware: auto-select mediad when its socket exists
+python3 duck_soccer_onboard.py --camera-source auto
+
+# Force the official mediad snapshot path
+python3 duck_soccer_onboard.py --camera-source mediad
+
+# Legacy firmware only / mediad intentionally stopped
+python3 duck_soccer_onboard.py --camera-source v4l2
 ```
+
+Useful options:
+
+```text
+--media-socket PATH      Override /run/mediad/media.sock
+--v4l2-device N          Legacy OpenCV camera index
+--loop-sleep SECONDS     Minimum delay between control iterations
+```
+
+> **Hardware calibration is still required.** HSV thresholds, camera FOV, the monocular ball-size distance estimate, and the terminal blind-advance duration were developed in simulation and should be re-calibrated on the physical robot before autonomous kicking.
 
 ---
 
@@ -213,7 +263,7 @@ python3 duck_soccer_onboard.py
 microduck-vision-soccer/
 ├── sim_duck_soccer.py        # ⚽ Simulation entry point (--mode strict / demo)
 ├── benchmark.py              # 🏁 Automated benchmark suite
-├── duck_soccer_onboard.py    # 🤖 Compliant real-robot onboard runner
+├── duck_soccer_onboard.py    # 🤖 mediad camera + robotd real-robot runner
 ├── oracle_soccer.py          # 🎯 Ground-truth navigation baseline
 ├── requirements.txt          # 📦 Python dependencies
 ├── LICENSE                   # 📄 Apache-2.0 License

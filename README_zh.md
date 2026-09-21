@@ -1,6 +1,6 @@
 # 🦆 Microduck Vision Soccer — MuJoCo 自主机器人足球 ⚽
 
-面向 Pollen Robotics Microduck 的 MuJoCo 自主机器人足球：通过头部相机找球、接近并瞄准，再用双足策略完成真实物理踢球。最新仿真版本支持一只视觉进攻鸭对阵一只单目视觉守门鸭。
+面向 Pollen Robotics Microduck 的自主机器人足球：先在 MuJoCo 中开发和验证视觉闭环，再通过官方 `mediad` 相机接口与 `robotd` 控制接口迁移到真机。最新仿真版本支持一只视觉进攻鸭对阵一只单目视觉守门鸭。
 
 <p align="center">
   <a href="README.md"><b>English</b></a> · <a href="README_zh.md"><b>中文</b></a>
@@ -22,7 +22,7 @@ python sim_duck_soccer.py --mode strict
 python benchmark.py --trials 10 --seed 0
 ```
 
-严格模式只用头部 RGB 相机、IMU 和关节编码器做控制；仿真世界坐标只供独立评估。踢球由随仓库提供的 ONNX 策略和 MuJoCo 真实接触完成，不瞬移足球，也不注入速度。由于 Microduck 实机尚未发货，目前无法进行真机验证；仓库中的机载运行脚本留待收到实机后测试。
+严格模式只用头部 RGB 相机、IMU 和关节编码器做控制；仿真世界坐标只供独立评估。踢球由随仓库提供的 ONNX 策略和 MuJoCo 真实接触完成，不瞬移足球，也不注入速度。仓库现在已经包含对接当前 Microduck `mediad -> media.frame` 相机链路和 `robotd` JSON-RPC 控制链路的机载运行脚本；完整真机足球行为仍需在实体 Microduck 上验证。
 
 <p align="center">
   <img src="https://img.shields.io/badge/Robot-Microduck-ffcc00?style=flat-square" alt="Microduck">
@@ -32,7 +32,7 @@ python benchmark.py --trials 10 --seed 0
   <img src="https://img.shields.io/badge/License-Apache_2.0-red?style=flat-square" alt="License">
 </p>
 
-> **当前状态：仿真实验原型。** 严格视觉模式的测试范围见 [VALIDATION.md](VALIDATION.md)，单独验证的 98/100 仿真真值基线见 [ORACLE_VALIDATION.md](ORACLE_VALIDATION.md)。
+> **当前状态：仿真已验证、真机接口已就绪的原型。** 机载相机/控制接入已按当前 Microduck 官方 IPC 接口实现，但完整足球行为尚未在实体硬件上验证。严格视觉模式的测试范围见 [VALIDATION.md](VALIDATION.md)，单独验证的 98/100 仿真真值基线见 [ORACLE_VALIDATION.md](ORACLE_VALIDATION.md)。
 
 ### 最新功能：视觉进攻鸭 vs 视觉守门鸭
 
@@ -65,7 +65,7 @@ python sim_duck_soccer.py --mode strict --goalkeeper --headless \
    $$Z \approx \frac{f \cdot D}{d}$$
    随着小黄鸭逼近足球，步速根据真实距离平滑收敛减速，降低接近阶段的速度；盲区内仍可能出现位置误差。
 4. **对齐官方 `robotd` 控制链**：完整复刻了官方运动尺度（行走 0.9、踢球/站立 1.0）、一阶低通滤波（腿部 $\alpha=0.7$、头部 $\alpha=0.5$），并将射门时钟严格设定为官方标准的 **0.5 秒**。
-5. **严守官方机载 RPC 规范**：真机脚本 [`duck_soccer_onboard.py`](duck_soccer_onboard.py) 按 `duck-ipc-proto` 编写（尚未真机验证）：连续速度使用带 `vyaw` 的 JSON-RPC 通知（而非被拒绝的 `vtheta`），离散动作使用带 `id` 的请求，并支持官方 `chirp` 欢庆叫声。
+5. **对接当前 Microduck 机载 IPC**：真机脚本 [`duck_soccer_onboard.py`](duck_soccer_onboard.py) 从 `/run/mediad/media.sock` 调用 `media.frame` 获取新鲜相机帧，将原始 UYVY 转成 BGR，并应用官方返回的 `rotate` 相机安装角；运动命令则通过 `/run/robotd.sock` 发送。连续速度使用 `vyaw`，离散踢球使用 `robot.do`。同时保留旧固件可用的 V4L2 相机路径。
 
 ---
 
@@ -188,24 +188,74 @@ python oracle_soccer.py --seed 100 --trials 100 --duration 40 --workers 4 --outp
 
 ## 🤖 真机单机运行 (Real Robot Onboard Deployment)
 
-脚本 [`duck_soccer_onboard.py`](duck_soccer_onboard.py) 专门适配小黄鸭体内的 Rockchip RK3566 开发板：
+脚本 [`duck_soccer_onboard.py`](duck_soccer_onboard.py) 直接运行在 Microduck 的 Rockchip RK3566 Linux 主板上，并遵循当前官方守护进程分工：`mediad` 独占相机，`robotd` 独占电机和运动安全。
 
-### 1. 协议实现
-- **相机**：由 OpenCV 捕获 `/dev/video0` 画面。
-- **本地 Socket**：直接连接 `/run/robotd.sock` 发送 JSON-RPC 2.0：
-  - 连续速度控制：`notify("robot.move", {"vx": 0.3, "vy": 0.0, "vyaw": ...})`（协议严格要求 `vyaw`）
-  - 离散技能请求：`request("robot.do", {"skill": "kick_right"})`
-  - 声音反馈：`notify("robot.sound", {"tag": "chirp"})`
+### 1. 真机数据链路
 
-### 2. 运行步骤
+```text
+头部相机
+   ↓
+mediad
+   ↓  /run/mediad/media.sock
+media.frame（JSON 头 + 原始 UYVY 数据）
+   ↓
+UYVY → BGR → 应用 rotate → 缩放
+   ↓
+BallDetector / GoalDetector
+   ↓
+SoccerStateMachine
+   ↓
+/run/robotd.sock
+   ↓
+robot.move / robot.do(kick_right)
+```
+
+- **首选相机接口**：`/run/mediad/media.sock`，方法 `media.frame`。
+- **图像处理**：校验尺寸和字节数，将 packed UYVY 转成 BGR，根据 `rotate` 修正方向，再保持宽高比缩小。
+- **旧接口回退**：旧固件或明确停止 `mediad` 时，可用 `--camera-source v4l2` 直接通过 OpenCV/V4L2 取图。
+- **运动安全边界**：Python 不直接写任何舵机，只向 `robotd` 发送高层运动 intent。
+- **不读取仿真真值**：真机路径只消费图像检测结果和单调时钟，不读取 MuJoCo 世界坐标。
+
+### 2. 先检查真机相机接口
+
+当前 Microduck 固件可先运行：
+
 ```bash
-# 1. 传输脚本到小黄鸭
+robotctl version
+robotctl health
+ls -l /run/mediad/media.sock
+robotctl frame --output /tmp/frame.uyvy
+```
+
+`robotctl frame` 会把捕获尺寸与相机安装旋转角输出到 stderr。若 `media.frame` 不可用，应先升级机器人 daemon，或显式使用旧版 V4L2 路径。
+
+### 3. 部署与运行
+
+```bash
+# 传输脚本和 Python 包到小黄鸭
 scp -r duck_soccer_onboard.py microduck_soccer radxa@<小黄鸭IP>:~/
 
-# 2. 登录运行
 ssh radxa@<小黄鸭IP>
-python3 duck_soccer_onboard.py
+
+# 默认：检测到 mediad socket 时自动使用官方相机接口
+python3 duck_soccer_onboard.py --camera-source auto
+
+# 强制使用当前官方 mediad 接口
+python3 duck_soccer_onboard.py --camera-source mediad
+
+# 仅供旧固件 / 主动停止 mediad 的场景
+python3 duck_soccer_onboard.py --camera-source v4l2
 ```
+
+可用参数：
+
+```text
+--media-socket PATH      覆盖 /run/mediad/media.sock
+--v4l2-device N          旧版 OpenCV 相机编号
+--loop-sleep SECONDS     控制循环最小休眠时间
+```
+
+> **真机仍需要标定。** HSV 阈值、相机 FOV、基于球直径的单目测距，以及最终盲区前进时间均来自仿真，应在实体 Microduck 上重新标定后再进行自主踢球。
 
 ---
 
@@ -215,7 +265,7 @@ python3 duck_soccer_onboard.py
 microduck-vision-soccer/
 ├── sim_duck_soccer.py        # ⚽ 仿真主程序 (--mode strict / demo)
 ├── benchmark.py              # 🏁 自动化基准测试套件
-├── duck_soccer_onboard.py    # 🤖 符合官方协议的真机单机运行程序
+├── duck_soccer_onboard.py    # 🤖 mediad 相机 + robotd 真机运行程序
 ├── oracle_soccer.py          # 🎯 仿真真值导航对比基线
 ├── requirements.txt          # 📦 Python 依赖列表
 ├── LICENSE                   # 📄 Apache-2.0 开源许可
